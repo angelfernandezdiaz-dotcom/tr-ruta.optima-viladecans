@@ -4,4 +4,5 @@ networkx
 folium
 streamlit-folium
 scipy
+scikit-learn
 geopandas

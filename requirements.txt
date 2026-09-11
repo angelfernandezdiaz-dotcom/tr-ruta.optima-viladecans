@@ -1,5 +1,9 @@
-streamlit==1.62.0
-osmnx==2.1.1
-networkx==3.6.1
-pydeck==0.9.3
-pandas>=2.0
+streamlit
+osmnx
+networkx
+folium
+streamlit-folium
+scipy
+geopandas
+shapely
+matplotlib

@@ -5,5 +5,3 @@ folium
 streamlit-folium
 scipy
 geopandas
-shapely
-matplotlib

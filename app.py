@@ -1,93 +1,68 @@
 """
-FASE 3 - Aplicació web interactiva amb Streamlit
-Simulador de Dijkstra sobre la xarxa viària de Viladecans.
-Visualitza l'exploració progressiva de l'algorisme (front d'ona),
-la ruta òptima, i aporta validació científica (benchmark vs NetworkX)
-i exportació de resultats per a la memòria del TR.
+FASE 3 - Aplicacion web interactiva con Streamlit
+Simulador de Dijkstra sobre la red viaria de Viladecans.
+Visualiza la exploracion progresiva del algoritmo (frente de onda),
+la ruta optima, y aporta validacion cientifica (benchmark vs NetworkX)
+y exportacion de resultados para la memoria del TR.
 """
 
 import heapq
 import json
-import math
 import os
 import re
 import time
 from datetime import datetime
 
 import osmnx as ox
-ox.settings.bidirectional_network_types = ["walk"]
 import networkx as nx
 import pydeck as pdk
 import streamlit as st
 
 # =============================================================================
-# 1. CONFIGURACIÓ DE LA PÀGINA
+# 1. CONFIGURACION DE LA PAGINA
 # =============================================================================
 
-st.set_page_config(layout="wide", page_title="Simulador d'algorismes de ruta òptima a Viladecans")
+st.set_page_config(layout="wide", page_title="Simulador Dijkstra - Viladecans")
 
 
 # =============================================================================
-# 2. CÀRREGA DEL GRAF AMB CACHÉ
+# 2. CARGA DEL GRAFO CON CACHEO
 # =============================================================================
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 LUGAR_DEFECTO = "Viladecans, Barcelona, Spain"
 VELOCIDAD_DEFECTO_KMH = 30
-VELOCITAT_COTXE_KMH = 50
-VELOCITAT_CAMINANT_KMH = 4.5
-PENALIZACION_METROS = 15
+PENALIZACION_INT = 15
 UMBRAL_CONEXIONES = 6
-CRITERIO_DEFECTO = "Distància més curta (Metres)"
-PESO_UNICO = "length"
 
 
 @st.cache_data(show_spinner=False)
-def carregar_graf_des_de_fitxer(network_type):
+def descargar_grafo(lugar=LUGAR_DEFECTO, network_type="drive"):
+    """
+    Descarga el grafo de la red viaria de Viladecans con cacheo local.
+    Si el grafo ya esta en CACHE_DIR, lo carga directamente.
+    """
     os.makedirs(CACHE_DIR, exist_ok=True)
-    nombre_archivo = "grafo_viladecans"
-    ruta_cache = os.path.join(CACHE_DIR, f"{nombre_archivo}_{network_type}.graphml")
+    nombre_archivo = lugar.replace(", ", "_").replace(" ", "_")
+    ruta_cache = os.path.join(CACHE_DIR, f"{nombre_archivo}.graphml")
+
     if os.path.exists(ruta_cache):
         G = ox.load_graphml(ruta_cache)
     else:
-        G = ox.graph_from_place("Viladecans, Spain", network_type=network_type)
-        ox.save_graphml(G, ruta_cache)
-    return G
+        G = ox.graph_from_place(lugar, network_type=network_type)
+        ox.save_graphml(G, filepath=ruta_cache)
 
-
-def preparar_graf(network_type, penalitzar_cruces):
-    """
-    Carrega el graf segons el mode (drive/walk), en fa una còpia
-    de treball per no contaminar la memòria cau, força la
-    bidireccionalitat completa si és caminant, i l'enriqueix
-    amb dades de velocitat i temps.
-
-    - Mode "Cotxe" (drive): graf dirigit (MultiDiGraph) respectant
-      estrictament el sentit únic i restriccions de les vies.
-    - Mode "Caminant" (walk): converteix el graf en bidireccional
-      pur per garantir la circulació en ambdues direccions per
-      qualsevol carrer.
-    """
-    G_base = carregar_graf_des_de_fitxer(network_type)
-    G = G_base.copy()
-
-    if network_type == 'walk':
-        G = G.to_undirected().to_directed()
-
-    G = enriquecer_grafo(
-        G, network_type=network_type, penalizar_cruces=penalitzar_cruces
-    )
     return G
 
 
 # =============================================================================
-# 3. ENRIQUIMENT DEL GRAF (VELOCITAT I TEMPS)
+# 3. ENRIQUECIMIENTO DEL GRAFO (VELOCIDAD Y TIEMPOS)
 # =============================================================================
 
 def _limpiar_maxspeed(maxspeed_raw):
     """
-    Estandarditza l'atribut maxspeed d'OSMnx (str, llista o None).
-    Retorna la velocitat en km/h o None si no es pot determinar.
+    Estandariza el atributo maxspeed de OSMnx (str, lista o None).
+    Retorna la velocidad en km/h o None si no se puede determinar.
     """
     if maxspeed_raw is None:
         return None
@@ -110,29 +85,19 @@ def _limpiar_maxspeed(maxspeed_raw):
 
 
 def _grado_conexiones(G):
-    """Diccionari node -> nombre d'arestes incidents (grau)."""
+    """Diccionario nodo -> numero de aristas incidentes (grado)."""
     return dict(G.degree())
 
 
 @st.cache_data(show_spinner=False)
-def enriquecer_grafo(
-    _G,
-    network_type: str = "drive",
-    penalizar_cruces=False,
-    velocidad_default=VELOCIDAD_DEFECTO_KMH,
-):
+def enriquecer_grafo(_G, penalizar_cruces=False, velocidad_default=VELOCIDAD_DEFECTO_KMH):
     """
-    Afegeix l'atribut 'tiempo_seg' a cada aresta:
+    Anade el atributo 'tiempo_seg' a cada arista:
         tiempo_seg = length / (maxspeed_kmh * 1000 / 3600)
-    Si maxspeed és nul o llista, s'usa la velocitat per defecte (30 km/h).
+    Si maxspeed es nulo o lista, se usa la velocidad por defecto (30 km/h).
 
-    Si penalizar_cruces=True, se sumen 15 metres a les arestes que
-    connecten nodes amb un alt nombre de connexions (simulant semàfors).
-
-    El paràmetre network_type (drive/walk) participa en la clau de
-    memòria cau de Streamlit: en canviar de mode, la funció es torna
-    a avaluar amb el graf corresponent. El graf _G no es calcula el
-    seu hash (guionet baix) per evitar errors UnhashableParamError.
+    Si penalizar_cruces=True, se suman 15 segundos en las aristas que
+    conectan nodos con un alto numero de conexiones (simulando semaforos).
     """
     G2 = _G.copy()
     grados = _grado_conexiones(G2)
@@ -151,233 +116,129 @@ def enriquecer_grafo(
 
         if penalizar_cruces:
             if grados.get(u, 0) >= UMBRAL_CONEXIONES or grados.get(v, 0) >= UMBRAL_CONEXIONES:
-                length += PENALIZACION_METROS
+                tiempo_seg += PENALIZACION_INT
 
-        G2[u][v][key]["length"] = round(length, 3)
         G2[u][v][key]["tiempo_seg"] = round(tiempo_seg, 3)
 
     return G2
 
+
 # =============================================================================
-# 4. DIJKSTRA: CUA DE PRIORITATS AMB g(n)
+# 4. DIJKSTRA CON REGISTRO TOTAL DE RAMIFICACIONES
 # =============================================================================
 
-def executar_dijkstra(G, origen, desti):
+def dijkstra_con_ramificaciones(G, nodo_origen, nodo_destino, peso="length"):
     """
-    Algorisme de Dijkstra sobre el cost real acumulat g(n).
+    Dijkstra con registro de ramificaciones y parada teorica inmediata.
 
-    Utilitza una cua de prioritats (Min-Heap amb heapq) on la prioritat és
-    g(n), el cost acumulat des de l'origen. Inicialitza la distància de
-    l'origen a 0 i la resta a infinit. En cada iteració extreu el node amb
-    menor g(n), registra la ramificació/exploració per a l'animació visual
-    i avalua els seus veïns adjacents.
+    El algoritmo se detiene en cuanto el nodo destino es extraido de la
+    cola de prioridad (teoria de grafos: es su distancia minima garantizada).
 
-    g(n) s'obté sempre de l'atribut 'length' (distància en metres) de les
-    arestes: la distància és l'únic criteri d'optimització.
-
-    L'algorisme s'atura quan el node destí s'extreu de la cua: en aquest
-    moment la seva distància és la mínima garantida (teoria de grafs).
-
-    Retorna una tupla (ruta, cost, nodes_explorats, historial):
-      - ruta: llista de nodes des de l'origen fins al destí
-      - cost: g(n) acumulat total fins al destí
-      - nodes_explorats: nombre de nodes extrets de la cua
-      - historial: llista de dicts {'u', 'v', 'distancia'} amb les arestes
-        registrades per a l'animació visual
+    Retorna un diccionario con:
+      - ruta_optima: lista de nodos desde origen hasta destino
+      - historial_ramificaciones: lista de diccionarios {'u', 'v', 'distancia'}
+        con las aristas realmente exploradas (relajadas) por el algoritmo
+      - distancia_total: float con la distancia acumulada
+      - total_exploraciones: entero con el numero total de aristas evaluadas
     """
     distancias = {nodo: float("inf") for nodo in G.nodes()}
-    distancias[origen] = 0.0
+    distancias[nodo_origen] = 0.0
 
     padres = {nodo: None for nodo in G.nodes()}
 
-    pq = [(0, origen)]
-    historial = []
-    nodes_explorats = 0
+    pq = [(0, nodo_origen)]
+    historial_ramificaciones = []
+    total_exploraciones = 0
 
     while pq:
         dist_actual, u = heapq.heappop(pq)
-        nodes_explorats += 1
-
-        # 1. PARADA ESTRICTA: si el node extret és el destí, hem acabat.
-        if u == desti:
+       
+        # 1. CONDICIÓN DE PARADA TEÓRICA: Si el nodo extraído es el destino, terminamos.
+        if u == nodo_destino:
             break
 
-        # 2. Ignorar entrades obsoletes de la cua (distància no millorada).
-        if dist_actual > distancias.get(u, float('inf')):
+        # 2. Ignorar si ya hemos procesado este nodo con una distancia menor
+        if dist_actual > distancias.get(u, float("inf")):
             continue
 
-        # 3. REGISTRE VISUAL: només quan el node s'assenta (g(n) fixada).
-        if u in padres and u != origen:
-            pare = padres[u]
-            if isinstance(G, (nx.MultiDiGraph, nx.MultiGraph)):
-                pes_visual = G[pare][u][0].get('length', 1.0)
-            else:
-                pes_visual = G[pare][u].get('length', 1.0)
-
-            historial.append({
-                'u': pare,
-                'v': u,
-                'distancia': round(pes_visual, 2)
-            })
-
-        # 4. AVALUAR VEÏNS: relaxació amb el cost real g(n) = length (metres).
+        # 3. Exploración de vecinos
         for v, datos_arista in G[u].items():
-            if isinstance(G, (nx.MultiDiGraph, nx.MultiGraph)):
-                pes_arista = datos_arista[0].get('length', 1.0)
-            else:
-                pes_arista = datos_arista.get('length', 1.0)
+            total_exploraciones += 1
 
-            nova_distancia = dist_actual + pes_arista
+            # Calcular 'peso_arista' a partir de los datos de la arista
+            pesos = []
+            if hasattr(datos_arista, "items"):
+                for _key, data in datos_arista.items():
+                    if isinstance(data, dict):
+                        w = data.get(peso, data.get("length", 1))
+                        if isinstance(w, (int, float)):
+                            pesos.append(w)
+            elif isinstance(datos_arista, dict):
+                w = datos_arista.get(peso, datos_arista.get("length", 1))
+                if isinstance(w, (int, float)):
+                    pesos.append(w)
 
-            if nova_distancia < distancias.get(v, float('inf')):
-                distancias[v] = nova_distancia
+            peso_arista = min(pesos) if pesos else 1.0
+            nueva_distancia = dist_actual + peso_arista
+        historial_ramificaciones.append({
+            'u': u,
+            'v': v,
+            'distancia': round(peso_arista, 1) # (o la variable que usaras para la distancia)
+        })   
+            if nueva_distancia < distancias.get(v, float("inf")):
+                distancias[v] = nueva_distancia
                 padres[v] = u
-                heapq.heappush(pq, (nova_distancia, v))
+                heapq.heappush(pq, (nueva_distancia, v))
+         # ---> ANTES ESTABA AQUÍ (Vuelve a ponerlo exactamente aquí) <---
+                     
+                
 
-    if distancias[desti] == float("inf"):
-        return [], float("inf"), nodes_explorats, historial
+    if distancias[nodo_destino] == float("inf"):
+        return {
+            "ruta_optima": [],
+            "historial_ramificaciones": historial_ramificaciones,
+            "distancia_total": float("inf"),
+            "total_exploraciones": total_exploraciones,
+        }
 
     ruta = []
-    nodo = desti
+    nodo = nodo_destino
     while nodo is not None:
         ruta.insert(0, nodo)
         nodo = padres[nodo]
 
-    return ruta, distancias[desti], nodes_explorats, historial
+    return {
+        "ruta_optima": ruta,
+        "historial_ramificaciones": historial_ramificaciones,
+        "distancia_total": distancias[nodo_destino],
+        "total_exploraciones": total_exploraciones,
+    }
 
 
 # =============================================================================
-# 4b. A*: CUA DE PRIORITATS AMB f(n) = g(n) + h(n)
+# 5. VALIDACION CIENTIFICA (BENCHMARK VS NETWORKX)
 # =============================================================================
 
-def heuristica_euclidiana(node_actual, node_desti, G):
-    # Extreure coordenades (latitud i longitud en graus)
-    lat1, lon1 = G.nodes[node_actual]["y"], G.nodes[node_actual]["x"]
-    lat2, lon2 = G.nodes[node_desti]["y"], G.nodes[node_desti]["x"]
-
-    # Factor de conversió de graus a metres (aprox. 111.000 metres per grau de latitud)
-    lat_mitjana = math.radians((lat1 + lat2) / 2.0)
-    dx = (lon2 - lon1) * math.cos(lat_mitjana) * 111000.0
-    dy = (lat2 - lat1) * 111000.0
-
-    # Distància en línia recta en METRES (admissible i consistent amb g(n))
-    return math.sqrt(dx * dx + dy * dy)
-
-
-def executar_astar(G, origen, desti):
+def validar_con_networkx(G, nodo_origen, nodo_destino, peso):
     """
-    Algorisme A* amb la mateixa estructura que Dijkstra però amb prioritat
-    f(n) = g(n) + h(n), on h(n) és la distància euclidiana en línia recta
-    fins al destí. El càlcul de g(n) és idèntic al de Dijkstra i s'obté
-    sempre de l'atribut 'length' (distància en metres).
-
-    Retorna la mateixa estructura de dades que executar_dijkstra:
-    (ruta, cost, nodes_explorats, historial).
-    """
-    distancias = {nodo: float("inf") for nodo in G.nodes()}
-    distancias[origen] = 0.0
-
-    padres = {nodo: None for nodo in G.nodes()}
-
-    # La cua guarda (f_score, g_score, nodo)
-    h_origen = heuristica_euclidiana(origen, desti, G)
-    pq = [(h_origen, 0, origen)]
-    historial = []
-    nodes_explorats = 0
-
-    while pq:
-        f_actual, dist_actual, u = heapq.heappop(pq)
-        nodes_explorats += 1
-
-        # 1. PARADA ESTRICTA: si el node extret és el destí, hem acabat.
-        if u == desti:
-            break
-
-        # 2. Ignorar entrades obsoletes de la cua (g(n) no millorada).
-        if dist_actual > distancias.get(u, float('inf')):
-            continue
-
-        # 3. REGISTRE VISUAL: només quan el node s'assenta.
-        if u in padres and u != origen:
-            pare = padres[u]
-            if isinstance(G, (nx.MultiDiGraph, nx.MultiGraph)):
-                pes_visual = G[pare][u][0].get('length', 1.0)
-            else:
-                pes_visual = G[pare][u].get('length', 1.0)
-
-            historial.append({
-                'u': pare,
-                'v': u,
-                'distancia': round(pes_visual, 2)
-            })
-
-        # 4. AVALUAR VEÏNS: g(n) = length (metres), exactament igual que a Dijkstra.
-        for v, datos_arista in G[u].items():
-            if isinstance(G, (nx.MultiDiGraph, nx.MultiGraph)):
-                pes_arista = datos_arista[0].get('length', 1.0)
-            else:
-                pes_arista = datos_arista.get('length', 1.0)
-
-            nova_distancia = dist_actual + pes_arista
-
-            if nova_distancia < distancias.get(v, float('inf')):
-                distancias[v] = nova_distancia
-                padres[v] = u
-
-                # A* ordena per f(n) = g(n) + h(n)
-                h_score = heuristica_euclidiana(v, desti, G)
-                f_score = nova_distancia + h_score
-
-                heapq.heappush(pq, (f_score, nova_distancia, v))
-
-    if distancias[desti] == float("inf"):
-        return [], float("inf"), nodes_explorats, historial
-
-    ruta = []
-    nodo = desti
-    while nodo is not None:
-        ruta.insert(0, nodo)
-        nodo = padres[nodo]
-
-    return ruta, distancias[desti], nodes_explorats, historial
-
-
-# =============================================================================
-# 5. VALIDACIÓ CIENTÍFICA (BENCHMARK VS NETWORKX)
-# =============================================================================
-
-def validar_con_networkx(G, nodo_origen, nodo_destino, algorisme):
-    """
-    Executa la funció autòctona de NetworkX corresponent a l'algorisme
-    seleccionat i mesura el temps en ms. El pes (weight) és sempre 'length'.
-
-    - Dijkstra: nx.dijkstra_path i nx.dijkstra_path_length
-    - A*: nx.astar_path i nx.astar_path_length
-
+    Ejecuta el algoritmo nativo de NetworkX y mide el tiempo en ms.
     Retorna: (ruta, coste_total_segun_peso, tiempo_ms)
     """
-    if algorisme == "Dijkstra":
-        calcula_ruta = nx.dijkstra_path
-        calcula_coste = nx.dijkstra_path_length
-    else:
-        calcula_ruta = nx.astar_path
-        calcula_coste = nx.astar_path_length
-
     inicio = time.perf_counter()
-    ruta = calcula_ruta(G, source=nodo_origen, target=nodo_destino, weight="length")
-    coste = calcula_coste(G, source=nodo_origen, target=nodo_destino, weight="length")
+    ruta = nx.shortest_path(G, source=nodo_origen, target=nodo_destino, weight=peso)
+    coste = nx.shortest_path_length(G, source=nodo_origen, target=nodo_destino, weight=peso)
     fin = time.perf_counter()
 
     return ruta, coste, (fin - inicio) * 1000
 
 
-def metricas_ruta(G, ruta, velocitat_kmh):
+def metricas_ruta(G, ruta):
     """
-    Calcula la distància (m) real d'una ruta i el temps estimat (min)
-    segons la velocitat mitjana del mode de transport (50 km/h cotxe,
-    4.5 km/h caminant).
+    Calcula la distancia (m) real y el tiempo estimado (min) de una ruta,
+    independientemente del peso usado por Dijkstra.
     """
     longitud = 0.0
+    tiempo = 0.0
 
     for u, v in zip(ruta, ruta[1:]):
         aristas_uv = G[u][v]
@@ -385,18 +246,19 @@ def metricas_ruta(G, ruta, velocitat_kmh):
             for _key, data in aristas_uv.items():
                 if isinstance(data, dict):
                     longitud += data.get("length", 0) or 0
+                    tiempo += data.get("tiempo_seg", 0) or 0
                     break
         elif isinstance(aristas_uv, dict):
             longitud += aristas_uv.get("length", 0) or 0
+            tiempo += aristas_uv.get("tiempo_seg", 0) or 0
 
-    tempo_seg = longitud / (velocitat_kmh * 1000 / 3600)
-    return longitud, tempo_seg / 60.0
+    return longitud, tiempo / 60.0
 
 
 def calcular_coincidencia(ruta_propia, ruta_nx):
     """
-    Calcula el percentatge d'arestes compartides entre totes dues rutes.
-    Si són idèntiques, retorna el 100%.
+    Calcula el porcentaje de aristas compartidas entre ambas rutas.
+    Si son identicas, devuelve 100%.
     """
     if not ruta_propia or not ruta_nx:
         return 0.0
@@ -411,15 +273,15 @@ def calcular_coincidencia(ruta_propia, ruta_nx):
 
 
 # =============================================================================
-# 6. UTILITATS PER A LA VISUALITZACIÓ (GEOMETRIA D'ARESTES / PYDECK)
+# 6. UTILIDADES PARA LA VISUALIZACION (GEOMETRIA DE ARISTAS / PYDECK)
 # =============================================================================
 
 def _geometria_arista_lonlat(G, u, v):
     """
-    Retorna la llista de parells [lon, lat] que descriuen la geometria de
-    l'aresta (u, v). Usa l'atribut 'geometry' d'OSMnx si existeix; si no,
-    usa les coordenades directes dels nodes u i v.
-    Aquest ordre [lon, lat] és el requerit per pdk.PathLayer.
+    Devuelve la lista de pares [lon, lat] que describen la geometria de la
+    arista (u, v). Usa el atributo 'geometry' de OSMnx si existe; si no,
+    usa las coordenadas directas de los nodos u y v.
+    Este orden [lon, lat] es el requerido por pdk.PathLayer.
     """
     datos = None
     aristas_uv = G[u][v]
@@ -444,8 +306,8 @@ def _geometria_arista_lonlat(G, u, v):
 
 def preparar_rutas_pydeck(G, historial, color, width):
     """
-    Converteix l'historial d'arestes (u, v) en l'estructura estricta
-    exigida per pdk.PathLayer. Cada tram és un diccionari amb:
+    Convierte el historial de aristas (u, v) en la estructura estricta
+    exigida por pdk.PathLayer. Cada tramo es un diccionario con:
 
       {
         "path": [[lon1, lat1], [lon2, lat2], ...],
@@ -470,13 +332,13 @@ def preparar_rutas_pydeck(G, historial, color, width):
 
 def construir_deck(G, datos_ramificaciones, datos_ruta, nodo_origen, nodo_destino):
     """
-    Munta el pdk.Deck complet amb:
-      - Capa base: tota la xarxa viària en gris tenue (no seleccionable).
-      - Capa front d'ona: ramificacions explorades en taronja/vermell semi-transparent.
-      - Capa ruta: ruta òptima en blau intens amb més gruix.
-      - Marcadors d'origen i destí.
+    Ensambla el pdk.Deck completo con:
+      - Capa base: toda la red viaria en gris tenue (no seleccionable).
+      - Capa frente de onda: ramificaciones en azul semi-transparente.
+      - Capa ruta: ruta optima en rojo brillante con mayor grosor.
+      - Marcadores de origen y destino.
     """
-    # Capa base: tota la xarxa viària en gris clar de fons
+    # Capa base: toda la red viaria en gris claro de fondo
     base_aristas = list(G.edges())
     datos_base = preparar_rutas_pydeck(G, base_aristas, [160, 160, 160, 50], 2)
     capa_base = pdk.Layer(
@@ -489,7 +351,7 @@ def construir_deck(G, datos_ramificaciones, datos_ruta, nodo_origen, nodo_destin
         pickable=False,
     )
 
-    # Capa d'exploració: front d'ona en taronja/vermell semi-transparent
+    # Capa de exploracion: frente de onda en azul semi-transparente
     capa_exploracion = pdk.Layer(
         "PathLayer",
         data=datos_ramificaciones,
@@ -500,7 +362,7 @@ def construir_deck(G, datos_ramificaciones, datos_ruta, nodo_origen, nodo_destin
         pickable=True,
     )
 
-    # Capa de la ruta òptima: blau intens i més gruixuda
+    # Capa de la ruta optima: rojo brillante y mas gruesa
     capa_ruta = pdk.Layer(
         "PathLayer",
         data=datos_ruta,
@@ -511,7 +373,7 @@ def construir_deck(G, datos_ramificaciones, datos_ruta, nodo_origen, nodo_destin
         pickable=True,
     )
 
-    # Marcadors d'origen i destí
+    # Marcadores de origen y destino
     lat_o = G.nodes[nodo_origen]["y"]
     lon_o = G.nodes[nodo_origen]["x"]
     lat_d = G.nodes[nodo_destino]["y"]
@@ -562,13 +424,13 @@ def construir_deck(G, datos_ramificaciones, datos_ruta, nodo_origen, nodo_destin
 
 
 # =============================================================================
-# 7. EXPORTACIÓ DE RESULTATS (JSON PER AL TR)
+# 7. EXPORTACION DE RESULTADOS (JSON PARA EL TR)
 # =============================================================================
 
 def generar_resumen_json(resultado):
     """
-    Genera el JSON tècnic descarregable amb el resum de la prova.
-    Serveix com a evidència directa per annexar a la memòria del TR.
+    Genera el JSON tecnico descargable con el resumen de la prueba.
+    Sirve como evidencia directa para anexar en la memoria del TR.
     """
     resumen = {
         "descripcion": "Simulador Dijkstra - Viladecans (Fase 3)",
@@ -585,7 +447,7 @@ def generar_resumen_json(resultado):
         "criterio_optimizacion": resultado["criterio"],
         "peso_usado": resultado["peso"],
         "penalizacion_semaforos": resultado["penalizar"],
-        "penalizacion_aplicada_m": PENALIZACION_METROS if resultado["penalizar"] else 0,
+        "penalizacion_aplicada_seg": PENALIZACION_INT if resultado["penalizar"] else 0,
         "velocidad_por_defecto_kmh": VELOCIDAD_DEFECTO_KMH,
         "resultados": {
             "distancia_total_m": round(resultado["distancia_total"], 2),
@@ -607,120 +469,60 @@ def generar_resumen_json(resultado):
 
 
 # =============================================================================
-# 8. BARRA LATERAL: ENTRADES DE L'USUARI
+# 8. BARRA LATERAL: ENTRADAS DEL USUARIO
 # =============================================================================
 
-if 'lat_origen' not in st.session_state:
-    st.session_state.lat_origen = 41.3168
-if 'lon_origen' not in st.session_state:
-    st.session_state.lon_origen = 2.0163
-if 'lat_destino' not in st.session_state:
-    st.session_state.lat_destino = 41.3255
-if 'lon_destino' not in st.session_state:
-    st.session_state.lon_destino = 2.0005
-if 'simular' not in st.session_state:
-    st.session_state.simular = False
-
-
-def intercanviar_coordenades():
-    # S'executa ABANS de dibuixar els widgets
-    temp_lat = st.session_state.lat_origen
-    temp_lon = st.session_state.lon_origen
-
-    st.session_state.lat_origen = st.session_state.lat_destino
-    st.session_state.lon_origen = st.session_state.lon_destino
-
-    st.session_state.lat_destino = temp_lat
-    st.session_state.lon_destino = temp_lon
-
-
-def canvi_mode():
-    # Quan l'usuari canvia de cotxe a caminant (o viceversa), torna a
-    # calcular automàticament amb el nou mode sense recarregar la pàgina.
-    st.session_state['simular'] = True
-    st.session_state['resultados'] = None
-    if 'G' in st.session_state:
-        del st.session_state['G']
-
-
 with st.sidebar:
-    st.sidebar.title("Simulador d'algorismes a Viladecans")
+    st.title("Simulador Dijkstra")
     st.markdown(
         """
-        **Com funcionen aquests algorismes?**
+        **Trabajo de Recerca** - Optimizacion de rutas con el
+        algoritmo de Dijkstra sobre la red viaria de Viladecans.
 
-        *   **Dijkstra:** Explora la xarxa de carrers en totes direccions alhora, creant un "front d'ona" circular. Garanteix trobar la ruta més curta, però a costa d'explorar molts carrers innecessaris que s'allunyen del destí.
-        *   **A* (A-Estrella):** És la versió "intel·ligent" de Dijkstra. Utilitza una estimació matemàtica (heurística) basada en la distància en línia recta fins al destí. D'aquesta manera, prioritza explorar només els carrers que l'acosten a la meta, garantint trobar també la ruta òptima però explorant molts menys nodes.
-        """
-    )
-    st.markdown(
-        """
-        **Treball de Recerca** - Optimització de rutes amb els
-        algorismes de Dijkstra i A* sobre la xarxa viària de Viladecans.
-
-        Tria el criteri d'optimització, ajusta la velocitat de
-        reproducció i prem **Inicia la Simulació**.
+        Elige el criterio de optimizacion, ajusta la velocidad de
+        reproduccion y pulsa **Iniciar Simulacion**.
         """
     )
 
-    st.subheader("Coordenades d'origen")
-    lat_origen = st.number_input("Latitud d'origen", format="%.6f", key="lat_origen")
-    lon_origen = st.number_input("Longitud d'origen", format="%.6f", key="lon_origen")
+    st.subheader("Coordenadas de Origen")
+    lat_origen = st.number_input("Latitud de Origen", value=41.3168, format="%.6f")
+    lon_origen = st.number_input("Longitud de Origen", value=2.0163, format="%.6f")
 
-    st.button(
-        "🔄 Intercanviar origen i destí",
-        on_click=intercanviar_coordenades,
-        use_container_width=True,
+    st.subheader("Coordenadas de Destino")
+    lat_destino = st.number_input("Latitud de Destino", value=41.3255, format="%.6f")
+    lon_destino = st.number_input("Longitud de Destino", value=2.0005, format="%.6f")
+
+    st.subheader("Criterio de optimización")
+    criterio = st.radio(
+        "Elige el criterio de la ruta",
+        options=["Distancia más corta (Metros)", "Tiempo más rápido (Segundos/Minutos)"],
+        index=0,
     )
-
-    st.subheader("Coordenades de destí")
-    lat_destino = st.number_input("Latitud de destí", format="%.6f", key="lat_destino")
-    lon_destino = st.number_input("Longitud de destí", format="%.6f", key="lon_destino")
-
-    st.selectbox(
-        "Mode de transport",
-        ["Cotxe", "Caminant"],
-        key="mode_selector",
-        on_change=canvi_mode,
-    )
-    tipus_xarxa = "drive" if st.session_state["mode_selector"] == "Cotxe" else "walk"
-
-    algorisme_triat = st.selectbox("Tria l'algorisme", ["Dijkstra", "A* (A-Star)"])
-
-    st.caption("Optimització per distància (metres).")
+    peso_elegido = "length" if criterio.startswith("Distancia") else "tiempo_seg"
 
     penalizar_cruces = st.toggle(
-        "Simular penalització per semàfors/encreuaments (+15 m per intersecció)",
+        "Simular penalización por semáforos/cruces (+15s por intersección)",
         value=False,
     )
 
-    mida_lot = st.slider(
-        "Carrers per fotograma (Mida del lot)",
+    velocidad = st.slider(
+        "Velocidad de reproducción",
         min_value=1,
-        max_value=200,
-        value=15,
+        max_value=15,
+        value=5,
         step=1,
-        help="Més alt = més ràpid",
+        format="%dx",
     )
 
-    pausa_animacio = st.slider(
-        "Pausa entre fotogrames (segons)",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.0,
-        step=0.05,
-        help="Més alt = més lent",
-    )
+    iniciar = st.button("Iniciar Simulación", type="primary", use_container_width=True)
 
-    boto_iniciar = st.sidebar.button("▶️ Iniciar simulació", type="primary")
-
-    if boto_iniciar:
-        st.session_state.simular = True
+    if iniciar:
+        st.session_state["simulacion_activa"] = True
         st.session_state["resultados"] = None
 
     st.divider()
 
-    # Botó de descàrrega del resum per al TR (només si hi ha resultats)
+    # Boton de descarga del resumen para el TR (solo si hay resultados)
     resultados_guardados = st.session_state.get("resultados")
     if resultados_guardados and resultados_guardados.get("ruta_optima"):
         resumen_json = generar_resumen_json(resultados_guardados)
@@ -730,7 +532,7 @@ with st.sidebar:
             + ".json"
         )
         st.download_button(
-            label="Descarrega el resum (JSON)",
+            label="Descargar resumen (JSON)",
             data=resumen_json,
             file_name=nombre_archivo,
             mime="application/json",
@@ -739,62 +541,56 @@ with st.sidebar:
 
 
 # =============================================================================
-# 9. ZONA PRINCIPAL: CÀRREGA, CÀLCUL, ANIMACIÓ I VALIDACIÓ
+# 9. ZONA PRINCIPAL: CARGA, CALCULO, ANIMACION Y VALIDACION
 # =============================================================================
 
-st.title("Simulador d'algorismes de ruta òptima a Viladecans")
+st.title("Exploración de Dijkstra en Viladecans")
 
-if not st.session_state.simular:
+if not st.session_state.get("simulacion_activa"):
     st.info(
         """
-        Configura les coordenades i els paràmetres a la barra lateral i prem
-        **▶️ Iniciar simulació** per executar la simulació.
+        Configura las coordenadas en la barra lateral y pulsa
+        **Iniciar Simulación** para comenzar.
         """
     )
 else:
-    firma = (lat_origen, lon_origen, lat_destino, lon_destino, penalizar_cruces, tipus_xarxa, algorisme_triat)
+    firma = (lat_origen, lon_origen, lat_destino, lon_destino, peso_elegido, penalizar_cruces)
     resultado = st.session_state.get("resultados")
 
-    if resultado is None:
-        # Primer càlcul o botó premut: calcular la simulació
-        with st.spinner("Carregant el graf i calculant rutes..."):
-            G = preparar_graf(tipus_xarxa, penalizar_cruces)
-            st.session_state['G'] = G
+    # Recalcular solo si el criterio / coords / penalizacion cambian
+    if resultado is None or resultado.get("firma") != firma:
+
+        with st.spinner("Enriqueciendo grafo (tiempos) y calculando rutas..."):
+            G_base = descargar_grafo()
+            G = enriquecer_grafo(G_base, penalizar_cruces=penalizar_cruces)
 
             nodo_origen = ox.nearest_nodes(G, X=lon_origen, Y=lat_origen)
             nodo_destino = ox.nearest_nodes(G, X=lon_destino, Y=lat_destino)
 
             inicio = time.perf_counter()
-            if algorisme_triat == "A* (A-Star)":
-                ruta_optima, distancia_total, nusos_explorats, historial = executar_astar(G, nodo_origen, nodo_destino)
-            else:
-                ruta_optima, distancia_total, nusos_explorats, historial = executar_dijkstra(G, nodo_origen, nodo_destino)
+            res_dijkstra = dijkstra_con_ramificaciones(G, nodo_origen, nodo_destino, peso=peso_elegido)
             fin = time.perf_counter()
             t_propio_ms = (fin - inicio) * 1000
 
-            velocitat_mode = (
-                VELOCITAT_COTXE_KMH if tipus_xarxa == "drive" else VELOCITAT_CAMINANT_KMH
-            )
-
             try:
                 ruta_nx, coste_nx, t_nx_ms = validar_con_networkx(
-                    G, nodo_origen, nodo_destino, algorisme_triat
+                    G, nodo_origen, nodo_destino, peso_elegido
                 )
             except nx.NetworkXNoPath:
                 ruta_nx, coste_nx, t_nx_ms = [], float("inf"), 0.0
 
-            distancia_ruta, tiempo_ruta_min = metricas_ruta(G, ruta_optima, velocitat_mode)
-            distancia_nx, tiempo_nx_min = metricas_ruta(G, ruta_nx, velocitat_mode)
+            ruta_optima = res_dijkstra["ruta_optima"]
+            distancia_ruta, tiempo_ruta_min = metricas_ruta(G, ruta_optima)
+            distancia_nx, tiempo_nx_min = metricas_ruta(G, ruta_nx)
 
             pct_coincidencia = calcular_coincidencia(ruta_optima, ruta_nx)
 
         if not ruta_optima:
-            resultado = {
+            st.session_state["resultados"] = {
                 "firma": firma,
                 "ruta_optima": [],
-                "criterio": CRITERIO_DEFECTO,
-                "algorisme": algorisme_triat,
-                "peso": PESO_UNICO,
+                "criterio": criterio,
+                "peso": peso_elegido,
                 "penalizar": penalizar_cruces,
                 "lat_origen": lat_origen,
                 "lon_origen": lon_origen,
@@ -802,11 +598,12 @@ else:
                 "lon_destino": lon_destino,
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
-            st.session_state["resultados"] = resultado
+            st.rerun()
         else:
-            # Preparar dades de visualització (estructura estricta Pydeck)
+            # Preparar datos de visualizacion (estructura estricta Pydeck)
+            historial = res_dijkstra["historial_ramificaciones"]
             ramificaciones_datos = preparar_rutas_pydeck(
-                G, historial, color=[255, 69, 0, 150], width=3
+                G, historial, color=[30, 144, 255, 180], width=3
             )
 
             aristas_ruta = [
@@ -814,7 +611,7 @@ else:
                 for i in range(len(ruta_optima) - 1)
             ]
             ruta_datos = preparar_rutas_pydeck(
-                G, aristas_ruta, color=[30, 144, 255, 255], width=8
+                G, aristas_ruta, color=[255, 0, 0, 255], width=8
             )
 
             deck_final = construir_deck(
@@ -828,9 +625,8 @@ else:
                 "nodo_destino": nodo_destino,
                 "ruta_optima": ruta_optima,
                 "historial": historial,
-                "distancia_total": distancia_total,
-                "total_exploraciones": len(historial),
-                "nusos_explorats": nusos_explorats,
+                "distancia_total": res_dijkstra["distancia_total"],
+                "total_exploraciones": res_dijkstra["total_exploraciones"],
                 "ramificaciones_datos": ramificaciones_datos,
                 "ruta_datos": ruta_datos,
                 "deck_final": deck_final,
@@ -843,9 +639,8 @@ else:
                 "distancia_nx": distancia_nx,
                 "tiempo_nx_min": tiempo_nx_min,
                 "pct_coincidencia": pct_coincidencia,
-                "criterio": CRITERIO_DEFECTO,
-                "algorisme": algorisme_triat,
-                "peso": PESO_UNICO,
+                "criterio": criterio,
+                "peso": peso_elegido,
                 "penalizar": penalizar_cruces,
                 "lat_origen": lat_origen,
                 "lon_origen": lon_origen,
@@ -855,128 +650,140 @@ else:
                 "reproducir_animacion": True,
             }
             st.session_state["resultados"] = resultado
-    elif resultado.get("firma") != firma:
-        # L'usuari ha modificat algun paràmetre: posem la simulació en pausa
-        st.session_state.simular = False
-        st.info(
-            """
-            S'han detectat canvis en els paràmetres o les coordenades. Prem
-            **▶️ Iniciar simulació** per tornar a executar la simulació.
-            """
-        )
-        resultado = None
+            st.rerun()
 
-    if resultado is not None:
-        if not resultado["ruta_optima"]:
-            st.error("No s'ha trobat cap ruta entre les coordenades indicades.")
+    resultado = st.session_state.get("resultados")
+
+    if resultado is None:
+        st.write("")
+    elif not resultado["ruta_optima"]:
+        st.error("No se ha encontrado ninguna ruta entre las coordenadas indicadas.")
+    else:
+        # -------------------------------------------------------
+        # ANIMACION PASO A PASO: crecimiento del frente de onda
+        # -------------------------------------------------------
+        mapa_placeholder = st.empty()
+        ramificaciones_datos = resultado["ramificaciones_datos"]
+        G_deck = resultado["G"]
+
+        if resultado.get("reproducir_animacion"):
+            n_ramificaciones = len(ramificaciones_datos)
+            lote = 30 if n_ramificaciones else 1
+            pausa = 0.20 / velocidad
+
+            barra_progreso = st.progress(0.0)
+
+            for i in range(0, n_ramificaciones, lote):
+                datos_lote = ramificaciones_datos[:i + lote]
+                deck = construir_deck(
+                    G_deck,
+                    datos_lote,
+                    [],
+                    resultado["nodo_origen"],
+                    resultado["nodo_destino"],
+                )
+                mapa_placeholder.pydeck_chart(deck)
+                barra_progreso.progress(min((i + lote) / n_ramificaciones, 1.0))
+                time.sleep(pausa)
+
+            barra_progreso.progress(1.0)
+            mapa_placeholder.pydeck_chart(resultado["deck_final"])
+            resultado["reproducir_animacion"] = False
         else:
-            # -------------------------------------------------------
-            # ANIMACIÓ PAS A PAS: creixement del front d'ona
-            # -------------------------------------------------------
-            mapa_placeholder = st.empty()
-            ramificaciones_datos = resultado["ramificaciones_datos"]
-            G_deck = resultado["G"]
+            # Rerun sin cambios de parametros: mostrar el estado final
+            mapa_placeholder.pydeck_chart(resultado["deck_final"])
 
-            if resultado.get("reproducir_animacion"):
-                n_ramificaciones = len(ramificaciones_datos)
-                mida_lot_actiu = mida_lot if n_ramificaciones else 1
+        st.success("Simulación completada. Ruta óptima resaltada en rojo.")
 
-                barra_progreso = st.progress(0.0)
+        # -------------------------------------------------------
+        # METRICAS EN PANTALLA
+        # -------------------------------------------------------
+        distancia = resultado["distancia_total"]
+        peso_criterio = resultado["peso"]
 
-                for i in range(0, n_ramificaciones, mida_lot_actiu):
-                    datos_lote = ramificaciones_datos[:i + mida_lot_actiu]
-                    deck = construir_deck(
-                        G_deck,
-                        datos_lote,
-                        [],
-                        resultado["nodo_origen"],
-                        resultado["nodo_destino"],
-                    )
-                    mapa_placeholder.pydeck_chart(deck)
-                    barra_progreso.progress(min((i + mida_lot_actiu) / n_ramificaciones, 1.0))
-                    time.sleep(pausa_animacio)
+        col1, col2, col3, col4 = st.columns(4)
 
-                barra_progreso.progress(1.0)
-                mapa_placeholder.pydeck_chart(resultado["deck_final"])
-                resultado["reproducir_animacion"] = False
-            else:
-                # Rerun sense canvis de paràmetres: mostrar l'estat final
-                mapa_placeholder.pydeck_chart(resultado["deck_final"])
+        col1.metric(
+            "Distancia de la ruta",
+            f"{resultado['distancia_ruta'] / 1000:.2f} km"
+            if resultado['distancia_ruta'] >= 10000
+            else f"{resultado['distancia_ruta']:.1f} m",
+        )
+        col2.metric("Tiempo estimado", f"{resultado['tiempo_ruta_min']:.2f} min")
+        col3.metric("Ramificaciones evaluadas", f"{len(ramificaciones_datos)}")
+        col4.metric("Nodos en la ruta óptima", f"{len(resultado['ruta_optima'])}")
 
-            st.success("Simulació completada. Ruta òptima ressaltada en blau intens.")
-
-            # -------------------------------------------------------
-            # MÈTRIQUES EN PANTALLA
-            # -------------------------------------------------------
-            distancia = resultado["distancia_total"]
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            col1.metric(
-                "Distància de la ruta òptima",
-                f"{resultado['distancia_ruta'] / 1000:.2f} km"
-                if resultado['distancia_ruta'] >= 1000
-                else f"{resultado['distancia_ruta']:.0f} m",
+        if peso_criterio == "tiempo_seg":
+            st.caption(
+                f"Criterio: {resultado['criterio']} | Peso: tiempo_seg "
+                f"(coste total = {distancia:.1f} s)"
             )
-            col2.metric(
-                "Temps estimat",
-                f"{resultado['tiempo_ruta_min']:.2f} min",
-            )
-            col3.metric(
-                "Ramificacions avaluades",
-                f"{len(ramificaciones_datos)}",
-            )
-            col4.metric(
-                "Nodes a la ruta òptima",
-                f"{len(resultado['ruta_optima'])}",
+        else:
+            st.caption(
+                f"Criterio: {resultado['criterio']} | Peso: length "
+                f"(coste total = {distancia:.1f} m)"
             )
 
-            nom_mode = "cotxe (50 km/h)" if tipus_xarxa == "drive" else "caminant (4.5 km/h)"
-            st.caption(f"Temps estimat amb velocitat mitjana de {nom_mode}.")
-            st.caption(f"Criteri: {resultado['criterio']} | Pes: length (cost total = {distancia:.1f} m)")
+        # -------------------------------------------------------
+        # VALIDACION CIENTIFICA Y BENCHMARK
+        # -------------------------------------------------------
+        st.subheader("Validación científica y benchmark")
 
-            # -------------------------------------------------------
-            # VALIDACIÓ CIENTÍFICA I BENCHMARK
-            # -------------------------------------------------------
-            st.markdown(f"### Benchmark / Validació: {algorisme_triat} vs NetworkX")
+        unidad_coste = "m" if peso_criterio == "length" else "s"
+        etiqueta_coste = f"Coste total ({unidad_coste})"
 
-            etiqueta_algorisme = f"Algorisme propi ({algorisme_triat})"
+        comparativa = [
+            {
+                "Métrica": "Tiempo de ejecución",
+                "Algoritmo propio (Dijkstra)": f"{resultado['t_propio_ms']:.3f} ms",
+                "NetworkX": f"{resultado['t_nx_ms']:.3f} ms",
+                "Diferencia": f"{resultado['t_propio_ms'] - resultado['t_nx_ms']:+.3f} ms",
+            },
+            {
+                "Métrica": etiqueta_coste,
+                "Algoritmo propio (Dijkstra)": f"{resultado['distancia_total']:.2f}",
+                "NetworkX": f"{resultado['coste_nx']:.2f}",
+                "Diferencia": "Coincide" if abs(resultado['distancia_total'] - resultado['coste_nx']) < 1e-6 else "Difiere",
+            },
+            {
+                "Métrica": "Distancia recorrida",
+                "Algoritmo propio (Dijkstra)": f"{resultado['distancia_ruta']:.1f} m",
+                "NetworkX": f"{resultado['distancia_nx']:.1f} m",
+                "Diferencia": f"{resultado['distancia_ruta'] - resultado['distancia_nx']:+.1f} m",
+            },
+            {
+                "Métrica": "Tiempo estimado",
+                "Algoritmo propio (Dijkstra)": f"{resultado['tiempo_ruta_min']:.2f} min",
+                "NetworkX": f"{resultado['tiempo_nx_min']:.2f} min",
+                "Diferencia": f"{resultado['tiempo_ruta_min'] - resultado['tiempo_nx_min']:+.2f} min",
+            },
+            {
+                "Métrica": "Coincidencia de ruta",
+                "Algoritmo propio (Dijkstra)": "100% (referencia)",
+                "NetworkX": f"{resultado['pct_coincidencia']:.2f}%",
+                "Diferencia": (
+                    "Rutas idénticas" if resultado['pct_coincidencia'] >= 100.0 else "Rutas distintas"
+                ),
+            },
+        ]
 
-            comparativa = [
-                {
-                    "Mètrica": "Distància total (m)",
-                    etiqueta_algorisme: f"{resultado['distancia_ruta']:.1f}",
-                    "NetworkX": f"{resultado['distancia_nx']:.1f}",
-                    "Diferència": f"{resultado['distancia_ruta'] - resultado['distancia_nx']:+.1f}",
-                },
-                {
-                    "Mètrica": "Coincidència de ruta",
-                    etiqueta_algorisme: "100% (referència)",
-                    "NetworkX": f"{resultado['pct_coincidencia']:.2f}%",
-                    "Diferència": (
-                        "Rutes idèntiques" if resultado['pct_coincidencia'] >= 100.0 else "Rutes diferents"
-                    ),
-                },
-            ]
+        # Generación manual de tabla Markdown (sin PyArrow)
+        if comparativa:
+            headers = list(comparativa[0].keys())
+            header_row = "| " + " | ".join(headers) + " |"
+            separator_row = "| " + " | ".join(["---"] * len(headers)) + " |"
+            data_rows = ["| " + " | ".join(str(val) for val in row.values()) + " |" for row in comparativa]
 
-            # Renderitzat en Markdown pur per evitar la dependència de pyarrow
-            columnes_taula = list(comparativa[0].keys())
-            linies_md = ["| " + " | ".join(columnes_taula) + " |"]
-            linies_md.append("| " + " | ".join(["---"] * len(columnes_taula)) + " |")
-            for fila_comparativa in comparativa:
-                linies_md.append(
-                    "| " + " | ".join(str(fila_comparativa[col]) for col in columnes_taula) + " |"
-                )
-            st.markdown("\n".join(linies_md))
-            st.caption("Taula comparativa: algorisme manual vs funció autòctona de NetworkX.")
+            tabla_markdown = "\n".join([header_row, separator_row] + data_rows)
+            st.markdown(tabla_markdown)
 
-            if resultado["pct_coincidencia"] >= 100.0:
-                st.success(
-                    "Verificació d'exactitud superada: la ruta del teu algorisme és "
-                    "100% idèntica a la ruta nativa de NetworkX."
-                )
-            else:
-                st.warning(
-                    f"Ambdues rutes coincideixen en un {resultado['pct_coincidencia']:.2f}% "
-                    "de les arestes (verificació d'exactitud parcial, possible empat en cost)."
-                )
+        if resultado["pct_coincidencia"] >= 100.0:
+            st.success(
+                "Verificación de exactitud superada: la ruta de tu algoritmo es "
+                "100% idéntica a la ruta nativa de NetworkX."
+            )
+        else:
+            st.warning(
+                f"Ambas rutas coinciden en un {resultado['pct_coincidencia']:.2f}% "
+                "de las aristas (verificacion de exactitud parcial, posible empate en coste)."
+            )

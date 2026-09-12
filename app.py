@@ -589,21 +589,19 @@ def obtenir_graf_per_seleccio(tipus_xarxa, penalitzar_cruces):
     return st.session_state["G_seleccio"]
 
 
-def construir_mapa_seleccio(lat_origen, lon_origen, lat_destino, lon_destino, center=None, zoom=None):
+def construir_mapa_seleccio(lat_origen, lon_origen, lat_destino, lon_destino):
     """
     Munta el mapa interactiu de Folium amb dos marcadors dinàmics:
     - Verd (play): Origen
     - Vermell (flag): Destí
-    Preserva el centre i el nivell de zoom de l'última interacció.
+
+    La vista es centra en el punt mitjà entre Origen i Destí amb zoom 14.
+    El component només retorna last_clicked (els pan/zoom no provoquen
+    reruns), així que la posició del mapa es manté si el marcador no canvia.
     """
-    if center is not None:
-        ubicacio = [center["lat"], center["lng"]]
-    else:
-        ubicacio = [(lat_origen + lat_destino) / 2, (lon_origen + lon_destino) / 2]
+    ubicacio = [(lat_origen + lat_destino) / 2, (lon_origen + lon_destino) / 2]
 
-    nivell_zoom = zoom or 14
-
-    mapa_sel = folium.Map(location=ubicacio, zoom_start=nivell_zoom, tiles="OpenStreetMap")
+    mapa_sel = folium.Map(location=ubicacio, zoom_start=14, tiles="OpenStreetMap")
 
     folium.Marker(
         [lat_origen, lon_origen],
@@ -830,29 +828,20 @@ st.caption(
 
 graf_seleccio = obtenir_graf_per_seleccio(tipus_xarxa, penalizar_cruces)
 
-center_prev = st.session_state.get("map_center_prev")
-zoom_prev = st.session_state.get("map_zoom_prev")
-
 mapa_seleccio = construir_mapa_seleccio(
     st.session_state.lat_origen,
     st.session_state.lon_origen,
     st.session_state.lat_destino,
     st.session_state.lon_destino,
-    center=center_prev,
-    zoom=zoom_prev,
 )
 
 dades_mapa = st_folium(
     mapa_seleccio,
-    key="mapa_seleccio",
-    height=520,
-    use_container_width=True,
+    width=700,
+    height=500,
+    returned_objects=["last_clicked"],
+    key="mapa_interactiu",
 )
-
-if dades_mapa.get("center"):
-    st.session_state["map_center_prev"] = dades_mapa["center"]
-if dades_mapa.get("zoom"):
-    st.session_state["map_zoom_prev"] = dades_mapa["zoom"]
 
 clic = dades_mapa.get("last_clicked")
 if clic and clic.get("lat") is not None and clic.get("lng") is not None:

@@ -669,14 +669,14 @@ def generar_resumen_json(resultado):
 # 8. BARRA LATERAL: ENTRADES DE L'USUARI
 # =============================================================================
 
-if 'lat_origen' not in st.session_state:
-    st.session_state.lat_origen = 41.3168
-if 'lon_origen' not in st.session_state:
-    st.session_state.lon_origen = 2.0163
-if 'lat_destino' not in st.session_state:
-    st.session_state.lat_destino = 41.3255
-if 'lon_destino' not in st.session_state:
-    st.session_state.lon_destino = 2.0005
+if 'lat_origen_val' not in st.session_state:
+    st.session_state.lat_origen_val = 41.3168
+if 'lon_origen_val' not in st.session_state:
+    st.session_state.lon_origen_val = 2.0163
+if 'lat_destino_val' not in st.session_state:
+    st.session_state.lat_destino_val = 41.3255
+if 'lon_destino_val' not in st.session_state:
+    st.session_state.lon_destino_val = 2.0005
 if 'simular' not in st.session_state:
     st.session_state.simular = False
 if 'asignar_a' not in st.session_state:
@@ -687,16 +687,55 @@ if 'clic_pendent' not in st.session_state:
     st.session_state.clic_pendent = None
 
 
+# ---------------------------------------------------------------------------
+# PROCESSAR EL CLIC PENDENT DEL MAPA A L'INICI DEL SCRIPT
+# (abans de dibuixar cap widget, per evitar StreamlitAPIException per
+#  reassignació de l'estat d'un widget ja instanciat)
+# ---------------------------------------------------------------------------
+clic_pendent = st.session_state.get("clic_pendent")
+if clic_pendent is not None:
+    lat_p, lon_p = clic_pendent
+
+    # Valors persistits en una execució anterior (els widgets ja s'han
+    # dibuixat abans), per tant són segurs de llegir aquí.
+    tipus_xarxa_top = (
+        "drive"
+        if st.session_state.get("mode_selector", "Cotxe") == "Cotxe"
+        else "walk"
+    )
+    graf_seleccio = obtenir_graf_per_seleccio(
+        tipus_xarxa_top, st.session_state.get("penalitzar_cruces", False)
+    )
+
+    nodo_seleccionat = ox.nearest_nodes(graf_seleccio, X=lon_p, Y=lat_p)
+    lat_node = graf_seleccio.nodes[nodo_seleccionat]["y"]
+    lon_node = graf_seleccio.nodes[nodo_seleccionat]["x"]
+
+    # Actualitzar les variables abans de crear cap widget amb aquestes claus
+    if st.session_state.asignar_a == "Origen":
+        st.session_state["lat_origen_val"] = lat_node
+        st.session_state["lon_origen_val"] = lon_node
+    else:
+        st.session_state["lat_destino_val"] = lat_node
+        st.session_state["lon_destino_val"] = lon_node
+
+    st.session_state["ultim_clic"] = (
+        st.session_state.asignar_a, round(lat_p, 7), round(lon_p, 7)
+    )
+    st.session_state["clic_pendent"] = None
+    st.rerun()  # Reinicia l'execució immediatament perquè els widgets agafin els nous valors
+
+
 def intercanviar_coordenades():
     # S'executa ABANS de dibuixar els widgets
-    temp_lat = st.session_state.lat_origen
-    temp_lon = st.session_state.lon_origen
+    temp_lat = st.session_state.lat_origen_val
+    temp_lon = st.session_state.lon_origen_val
 
-    st.session_state.lat_origen = st.session_state.lat_destino
-    st.session_state.lon_origen = st.session_state.lon_destino
+    st.session_state.lat_origen_val = st.session_state.lat_destino_val
+    st.session_state.lon_origen_val = st.session_state.lon_destino_val
 
-    st.session_state.lat_destino = temp_lat
-    st.session_state.lon_destino = temp_lon
+    st.session_state.lat_destino_val = temp_lat
+    st.session_state.lon_destino_val = temp_lon
 
 
 def canvi_mode():
@@ -729,8 +768,20 @@ with st.sidebar:
     )
 
     st.subheader("Coordenades d'origen")
-    lat_origen = st.number_input("Latitud d'origen", format="%.6f", key="lat_origen")
-    lon_origen = st.number_input("Longitud d'origen", format="%.6f", key="lon_origen")
+    lat_origen = st.number_input(
+        "Latitud d'origen",
+        format="%.6f",
+        value=st.session_state.get("lat_origen_val", 41.3168),
+        key="widget_lat_origen",
+    )
+    st.session_state["lat_origen_val"] = st.session_state["widget_lat_origen"]
+    lon_origen = st.number_input(
+        "Longitud d'origen",
+        format="%.6f",
+        value=st.session_state.get("lon_origen_val", 2.0163),
+        key="widget_lon_origen",
+    )
+    st.session_state["lon_origen_val"] = st.session_state["widget_lon_origen"]
 
     st.button(
         "🔄 Intercanviar origen i destí",
@@ -739,8 +790,20 @@ with st.sidebar:
     )
 
     st.subheader("Coordenades de destí")
-    lat_destino = st.number_input("Latitud de destí", format="%.6f", key="lat_destino")
-    lon_destino = st.number_input("Longitud de destí", format="%.6f", key="lon_destino")
+    lat_destino = st.number_input(
+        "Latitud de destí",
+        format="%.6f",
+        value=st.session_state.get("lat_destino_val", 41.3255),
+        key="widget_lat_destino",
+    )
+    st.session_state["lat_destino_val"] = st.session_state["widget_lat_destino"]
+    lon_destino = st.number_input(
+        "Longitud de destí",
+        format="%.6f",
+        value=st.session_state.get("lon_destino_val", 2.0005),
+        key="widget_lon_destino",
+    )
+    st.session_state["lon_destino_val"] = st.session_state["widget_lon_destino"]
 
     st.radio(
         "Assignar clic al mapa a:",
@@ -765,6 +828,7 @@ with st.sidebar:
     penalizar_cruces = st.toggle(
         "Simular penalització per semàfors/encreuaments (+15 m per intersecció)",
         value=False,
+        key="penalitzar_cruces",
     )
 
     mida_lot = st.slider(
@@ -828,44 +892,18 @@ st.caption(
     "Els marcadors verd (Origen) i vermell (Destí) es mouen automàticament."
 )
 
-graf_seleccio = obtenir_graf_per_seleccio(tipus_xarxa, penalizar_cruces)
-
 # ---------------------------------------------------------------
-# 1. PROCESSAR EL CLIC PENDENT (del rerun anterior) ABANS DEL MAPA
-#    -> així el marcador es desplaça immediatament al node més proper
-# ---------------------------------------------------------------
-clic_pendent = st.session_state.get("clic_pendent")
-if clic_pendent is not None:
-    lat_p, lon_p = clic_pendent
-    nodo_seleccionat = ox.nearest_nodes(graf_seleccio, X=lon_p, Y=lat_p)
-    lat_node = graf_seleccio.nodes[nodo_seleccionat]["y"]
-    lon_node = graf_seleccio.nodes[nodo_seleccionat]["x"]
-
-    if st.session_state.asignar_a == "Origen":
-        st.session_state.lat_origen = lat_node
-        st.session_state.lon_origen = lon_node
-    else:
-        st.session_state.lat_destino = lat_node
-        st.session_state.lon_destino = lon_node
-
-    st.session_state["ultim_clic"] = (
-        st.session_state.asignar_a, round(lat_p, 7), round(lon_p, 7)
-    )
-    st.session_state["clic_pendent"] = None
-
-# ---------------------------------------------------------------
-# 2. CREAR EL MAPA AMB LES COORDENADES ACTUALS DE st.session_state
+# El clic ja s'ha processat a l'inici del script (st.session_state.*_val).
+# Aquí només es dibuixa el mapa Folium amb els valors actuals.
 # ---------------------------------------------------------------
 mapa_seleccio = construir_mapa_seleccio(
-    st.session_state.lat_origen,
-    st.session_state.lon_origen,
-    st.session_state.lat_destino,
-    st.session_state.lon_destino,
+    st.session_state.get("lat_origen_val", 41.3168),
+    st.session_state.get("lon_origen_val", 2.0163),
+    st.session_state.get("lat_destino_val", 41.3255),
+    st.session_state.get("lon_destino_val", 2.0005),
 )
 
-# ---------------------------------------------------------------
-# 3. RENDERITZAR EL MAPA I CAPTURAR EL NOU CLIC (es desa per al proper rerun)
-# ---------------------------------------------------------------
+# RENDERITZAR EL MAPA I CAPTURAR EL NOU CLIC (es desa per al proper rerun)
 dades_mapa = st_folium(
     mapa_seleccio,
     width=700,

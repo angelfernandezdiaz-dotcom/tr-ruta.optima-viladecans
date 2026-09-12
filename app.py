@@ -683,6 +683,8 @@ if 'asignar_a' not in st.session_state:
     st.session_state.asignar_a = "Origen"
 if 'ultim_clic' not in st.session_state:
     st.session_state.ultim_clic = None
+if 'clic_pendent' not in st.session_state:
+    st.session_state.clic_pendent = None
 
 
 def intercanviar_coordenades():
@@ -828,6 +830,32 @@ st.caption(
 
 graf_seleccio = obtenir_graf_per_seleccio(tipus_xarxa, penalizar_cruces)
 
+# ---------------------------------------------------------------
+# 1. PROCESSAR EL CLIC PENDENT (del rerun anterior) ABANS DEL MAPA
+#    -> així el marcador es desplaça immediatament al node més proper
+# ---------------------------------------------------------------
+clic_pendent = st.session_state.get("clic_pendent")
+if clic_pendent is not None:
+    lat_p, lon_p = clic_pendent
+    nodo_seleccionat = ox.nearest_nodes(graf_seleccio, X=lon_p, Y=lat_p)
+    lat_node = graf_seleccio.nodes[nodo_seleccionat]["y"]
+    lon_node = graf_seleccio.nodes[nodo_seleccionat]["x"]
+
+    if st.session_state.asignar_a == "Origen":
+        st.session_state.lat_origen = lat_node
+        st.session_state.lon_origen = lon_node
+    else:
+        st.session_state.lat_destino = lat_node
+        st.session_state.lon_destino = lon_node
+
+    st.session_state["ultim_clic"] = (
+        st.session_state.asignar_a, round(lat_p, 7), round(lon_p, 7)
+    )
+    st.session_state["clic_pendent"] = None
+
+# ---------------------------------------------------------------
+# 2. CREAR EL MAPA AMB LES COORDENADES ACTUALS DE st.session_state
+# ---------------------------------------------------------------
 mapa_seleccio = construir_mapa_seleccio(
     st.session_state.lat_origen,
     st.session_state.lon_origen,
@@ -835,12 +863,15 @@ mapa_seleccio = construir_mapa_seleccio(
     st.session_state.lon_destino,
 )
 
+# ---------------------------------------------------------------
+# 3. RENDERITZAR EL MAPA I CAPTURAR EL NOU CLIC (es desa per al proper rerun)
+# ---------------------------------------------------------------
 dades_mapa = st_folium(
     mapa_seleccio,
     width=700,
     height=500,
     returned_objects=["last_clicked"],
-    key="mapa_interactiu",
+    key="mapa_dinamic",
 )
 
 clic = dades_mapa.get("last_clicked")
@@ -850,17 +881,7 @@ if clic and clic.get("lat") is not None and clic.get("lng") is not None:
     clau_clic = (st.session_state.asignar_a, round(lat_clic, 7), round(lon_clic, 7))
 
     if st.session_state.get("ultim_clic") != clau_clic:
-        nodo_seleccionat = ox.nearest_nodes(graf_seleccio, X=lon_clic, Y=lat_clic)
-        lat_node = graf_seleccio.nodes[nodo_seleccionat]["y"]
-        lon_node = graf_seleccio.nodes[nodo_seleccionat]["x"]
-
-        if st.session_state.asignar_a == "Origen":
-            st.session_state.lat_origen = lat_node
-            st.session_state.lon_origen = lon_node
-        else:
-            st.session_state.lat_destino = lat_node
-            st.session_state.lon_destino = lon_node
-
+        st.session_state["clic_pendent"] = (lat_clic, lon_clic)
         st.session_state["ultim_clic"] = clau_clic
         st.rerun()
 

@@ -836,25 +836,6 @@ with st.sidebar:
 
     st.divider()
 
-    # Botó de descàrrega de la ruta en GPX (només si hi ha resultats)
-    resultados_guardados = st.session_state.get("resultados")
-    if resultados_guardados and resultados_guardados.get("ruta_optima"):
-        gpx = generar_gpx(
-            resultados_guardados["G"], resultados_guardados["ruta_optima"]
-        )
-        nombre_gpx = (
-            "ruta_optima_viladecans_"
-            + resultados_guardados["timestamp"].replace(":", "-").replace(" ", "_")
-            + ".gpx"
-        )
-        st.download_button(
-            label="Descarrega la ruta (GPX)",
-            data=gpx,
-            file_name=nombre_gpx,
-            mime="application/gpx+xml",
-            use_container_width=True,
-        )
-
 
 # =============================================================================
 # 9. ZONA PRINCIPAL: CÀRREGA, CÀLCUL, ANIMACIÓ I VALIDACIÓ
@@ -1143,3 +1124,15 @@ else:
                     f"Ambdues rutes coincideixen en un {resultado['pct_coincidencia']:.2f}% "
                     "de les arestes (verificació d'exactitud parcial, possible empat en cost)."
                 )
+
+            # -------------------------------------------------------
+            # DESCARREGA DE LA RUTA EN GPX (ÚNIC botó de descàrrega)
+            # -------------------------------------------------------
+            gpx_data = generar_gpx(resultado["G"], resultado["ruta_optima"])
+            st.download_button(
+                label="📥 Descarregar ruta (.gpx)",
+                data=gpx_data,
+                file_name="ruta_optima_viladecans.gpx",
+                mime="application/gpx+xml",
+                help="Descarrega el fitxer per obrir-lo a Google My Maps, Wikiloc o altres apps",
+            )

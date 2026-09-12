@@ -669,22 +669,19 @@ def generar_resumen_json(resultado):
 # 8. BARRA LATERAL: ENTRADES DE L'USUARI
 # =============================================================================
 
-if 'lat_origen_val' not in st.session_state:
-    st.session_state.lat_origen_val = 41.3168
-if 'lon_origen_val' not in st.session_state:
-    st.session_state.lon_origen_val = 2.0163
-if 'lat_destino_val' not in st.session_state:
-    st.session_state.lat_destino_val = 41.3255
-if 'lon_destino_val' not in st.session_state:
-    st.session_state.lon_destino_val = 2.0005
+# ---------------------------------------------------------------------------
+# ESTAT CANÒNIC DE LES COORDENADES I DEL CONTROL DE CLICS (st.session_state)
+# ---------------------------------------------------------------------------
+if "origen_coords" not in st.session_state:
+    st.session_state["origen_coords"] = (41.315, 2.011)  # Coordenades per defecte
+if "desti_coords" not in st.session_state:
+    st.session_state["desti_coords"] = (41.320, 2.018)
+if "ultim_clic_processat" not in st.session_state:
+    st.session_state["ultim_clic_processat"] = None
+if "seleccio_actual" not in st.session_state:
+    st.session_state["seleccio_actual"] = "Origen"
 if 'simular' not in st.session_state:
     st.session_state.simular = False
-if 'asignar_a' not in st.session_state:
-    st.session_state.asignar_a = "Origen"
-if 'ultim_clic' not in st.session_state:
-    st.session_state.ultim_clic = None
-if 'clic_pendent' not in st.session_state:
-    st.session_state.clic_pendent = None
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +691,8 @@ if 'clic_pendent' not in st.session_state:
 # ---------------------------------------------------------------------------
 clic_pendent = st.session_state.get("clic_pendent")
 if clic_pendent is not None:
+    st.session_state["clic_pendent"] = None
+
     lat_p, lon_p = clic_pendent
 
     # Valors persistits en una execució anterior (els widgets ja s'han
@@ -711,31 +710,33 @@ if clic_pendent is not None:
     lat_node = graf_seleccio.nodes[nodo_seleccionat]["y"]
     lon_node = graf_seleccio.nodes[nodo_seleccionat]["x"]
 
-    # Actualitzar les variables abans de crear cap widget amb aquestes claus
-    if st.session_state.asignar_a == "Origen":
-        st.session_state["lat_origen_val"] = lat_node
-        st.session_state["lon_origen_val"] = lon_node
+    # Actualitzar la tupla canònica i les claus dels widgets (abans de crear-los)
+    if st.session_state.seleccio_actual == "Origen":
+        st.session_state["origen_coords"] = (lat_node, lon_node)
+        st.session_state["widget_lat_origen"] = lat_node
+        st.session_state["widget_lon_origen"] = lon_node
     else:
-        st.session_state["lat_destino_val"] = lat_node
-        st.session_state["lon_destino_val"] = lon_node
+        st.session_state["desti_coords"] = (lat_node, lon_node)
+        st.session_state["widget_lat_destino"] = lat_node
+        st.session_state["widget_lon_destino"] = lon_node
 
-    st.session_state["ultim_clic"] = (
-        st.session_state.asignar_a, round(lat_p, 7), round(lon_p, 7)
+    st.session_state["ultim_clic_processat"] = (
+        st.session_state.seleccio_actual, round(lat_p, 7), round(lon_p, 7)
     )
-    st.session_state["clic_pendent"] = None
-    st.rerun()  # Reinicia l'execució immediatament perquè els widgets agafin els nous valors
+    st.rerun()  # Els widgets agafaran els nous valors al re-instantciar-se
 
 
 def intercanviar_coordenades():
     # S'executa ABANS de dibuixar els widgets
-    temp_lat = st.session_state.lat_origen_val
-    temp_lon = st.session_state.lon_origen_val
-
-    st.session_state.lat_origen_val = st.session_state.lat_destino_val
-    st.session_state.lon_origen_val = st.session_state.lon_destino_val
-
-    st.session_state.lat_destino_val = temp_lat
-    st.session_state.lon_destino_val = temp_lon
+    st.session_state.origen_coords, st.session_state.desti_coords = (
+        st.session_state.desti_coords, st.session_state.origen_coords
+    )
+    st.session_state.widget_lat_origen, st.session_state.widget_lat_destino = (
+        st.session_state.widget_lat_destino, st.session_state.widget_lat_origen
+    )
+    st.session_state.widget_lon_origen, st.session_state.widget_lon_destino = (
+        st.session_state.widget_lon_destino, st.session_state.widget_lon_origen
+    )
 
 
 def canvi_mode():
@@ -771,17 +772,16 @@ with st.sidebar:
     lat_origen = st.number_input(
         "Latitud d'origen",
         format="%.6f",
-        value=st.session_state.get("lat_origen_val", 41.3168),
+        value=st.session_state.origen_coords[0],
         key="widget_lat_origen",
     )
-    st.session_state["lat_origen_val"] = st.session_state["widget_lat_origen"]
     lon_origen = st.number_input(
         "Longitud d'origen",
         format="%.6f",
-        value=st.session_state.get("lon_origen_val", 2.0163),
+        value=st.session_state.origen_coords[1],
         key="widget_lon_origen",
     )
-    st.session_state["lon_origen_val"] = st.session_state["widget_lon_origen"]
+    st.session_state["origen_coords"] = (lat_origen, lon_origen)
 
     st.button(
         "🔄 Intercanviar origen i destí",
@@ -793,22 +793,21 @@ with st.sidebar:
     lat_destino = st.number_input(
         "Latitud de destí",
         format="%.6f",
-        value=st.session_state.get("lat_destino_val", 41.3255),
+        value=st.session_state.desti_coords[0],
         key="widget_lat_destino",
     )
-    st.session_state["lat_destino_val"] = st.session_state["widget_lat_destino"]
     lon_destino = st.number_input(
         "Longitud de destí",
         format="%.6f",
-        value=st.session_state.get("lon_destino_val", 2.0005),
+        value=st.session_state.desti_coords[1],
         key="widget_lon_destino",
     )
-    st.session_state["lon_destino_val"] = st.session_state["widget_lon_destino"]
+    st.session_state["desti_coords"] = (lat_destino, lon_destino)
 
     st.radio(
         "Assignar clic al mapa a:",
         options=["Origen", "Destí"],
-        key="asignar_a",
+        key="seleccio_actual",
         horizontal=True,
         help="Els clics sobre el mapa interactiu actualitzaran la coordenada seleccionada.",
     )
@@ -888,19 +887,19 @@ st.title("Simulador d'algorismes de ruta òptima a Viladecans")
 st.markdown("## 🗺️ Selecció interactiva d'origen i destí")
 st.caption(
     f"📌 Fes clic sobre el mapa per assignar automàticament el punt "
-    f"(desplaçat al node més proper de la xarxa viària) a **{st.session_state.asignar_a}**. "
+    f"(desplaçat al node més proper de la xarxa viària) a **{st.session_state.seleccio_actual}**. "
     "Els marcadors verd (Origen) i vermell (Destí) es mouen automàticament."
 )
 
 # ---------------------------------------------------------------
-# El clic ja s'ha processat a l'inici del script (st.session_state.*_val).
-# Aquí només es dibuixa el mapa Folium amb els valors actuals.
+# El clic es processa a l'inici del script (tuples origen_coords/desti_coords).
+# Aquí només es dibuixa el mapa Folium amb les coordenades actuals.
 # ---------------------------------------------------------------
 mapa_seleccio = construir_mapa_seleccio(
-    st.session_state.get("lat_origen_val", 41.3168),
-    st.session_state.get("lon_origen_val", 2.0163),
-    st.session_state.get("lat_destino_val", 41.3255),
-    st.session_state.get("lon_destino_val", 2.0005),
+    st.session_state.origen_coords[0],
+    st.session_state.origen_coords[1],
+    st.session_state.desti_coords[0],
+    st.session_state.desti_coords[1],
 )
 
 # RENDERITZAR EL MAPA I CAPTURAR EL NOU CLIC (es desa per al proper rerun)
@@ -916,11 +915,12 @@ clic = dades_mapa.get("last_clicked")
 if clic and clic.get("lat") is not None and clic.get("lng") is not None:
     lat_clic = float(clic["lat"])
     lon_clic = float(clic["lng"])
-    clau_clic = (st.session_state.asignar_a, round(lat_clic, 7), round(lon_clic, 7))
+    clau_clic = (
+        st.session_state.seleccio_actual, round(lat_clic, 7), round(lon_clic, 7),
+    )
 
-    if st.session_state.get("ultim_clic") != clau_clic:
+    if st.session_state.get("ultim_clic_processat") != clau_clic:
         st.session_state["clic_pendent"] = (lat_clic, lon_clic)
-        st.session_state["ultim_clic"] = clau_clic
         st.rerun()
 
 st.divider()

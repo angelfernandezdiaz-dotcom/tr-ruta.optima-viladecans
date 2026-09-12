@@ -20,6 +20,9 @@ import networkx as nx
 import pydeck as pdk
 import streamlit as st
 
+import folium
+from streamlit_folium import st_folium
+
 # =============================================================================
 # 1. CONFIGURACIÓ DE LA PÀGINA
 # =============================================================================
@@ -568,6 +571,58 @@ def construir_deck(G, datos_ramificaciones, datos_ruta, nodo_origen, nodo_destin
 
 
 # =============================================================================
+# 6b. MAPA INTERACTIU FOLIUM PER A LA SELECCIÓ D'ORIGEN I DESTÍ
+# =============================================================================
+
+def obtenir_graf_per_seleccio(tipus_xarxa, penalitzar_cruces):
+    """
+    Retorna el graf de treball del mode seleccionat, reutilitzant-lo a la
+    memòria de sessió mentre no canviï el mode de transport ni la
+    penalització per semàfors. S'utilitza per capturar els clics del mapa
+    (ox.nearest_nodes) sense tornar a carregar el graf a cada rerun.
+    """
+    clau = (tipus_xarxa, penalitzar_cruces)
+    if st.session_state.get("clau_graf_seleccio") != clau:
+        with st.spinner("Carregant la xarxa viària per al mapa interactiu..."):
+            st.session_state["G_seleccio"] = preparar_graf(tipus_xarxa, penalitzar_cruces)
+        st.session_state["clau_graf_seleccio"] = clau
+    return st.session_state["G_seleccio"]
+
+
+def construir_mapa_seleccio(lat_origen, lon_origen, lat_destino, lon_destino, center=None, zoom=None):
+    """
+    Munta el mapa interactiu de Folium amb dos marcadors dinàmics:
+    - Verd (play): Origen
+    - Vermell (flag): Destí
+    Preserva el centre i el nivell de zoom de l'última interacció.
+    """
+    if center is not None:
+        ubicacio = [center["lat"], center["lng"]]
+    else:
+        ubicacio = [(lat_origen + lat_destino) / 2, (lon_origen + lon_destino) / 2]
+
+    nivell_zoom = zoom or 14
+
+    mapa_sel = folium.Map(location=ubicacio, zoom_start=nivell_zoom, tiles="OpenStreetMap")
+
+    folium.Marker(
+        [lat_origen, lon_origen],
+        popup="Origen",
+        tooltip="Origen",
+        icon=folium.Icon(color="green", icon="play", prefix="fa"),
+    ).add_to(mapa_sel)
+
+    folium.Marker(
+        [lat_destino, lon_destino],
+        popup="Destí",
+        tooltip="Destí",
+        icon=folium.Icon(color="red", icon="flag", prefix="fa"),
+    ).add_to(mapa_sel)
+
+    return mapa_sel
+
+
+# =============================================================================
 # 7. EXPORTACIÓ DE RESULTATS (JSON PER AL TR)
 # =============================================================================
 
@@ -626,6 +681,10 @@ if 'lon_destino' not in st.session_state:
     st.session_state.lon_destino = 2.0005
 if 'simular' not in st.session_state:
     st.session_state.simular = False
+if 'asignar_a' not in st.session_state:
+    st.session_state.asignar_a = "Origen"
+if 'ultim_clic' not in st.session_state:
+    st.session_state.ultim_clic = None
 
 
 def intercanviar_coordenades():
@@ -682,6 +741,14 @@ with st.sidebar:
     st.subheader("Coordenades de destí")
     lat_destino = st.number_input("Latitud de destí", format="%.6f", key="lat_destino")
     lon_destino = st.number_input("Longitud de destí", format="%.6f", key="lon_destino")
+
+    st.radio(
+        "Assignar clic al mapa a:",
+        options=["Origen", "Destí"],
+        key="asignar_a",
+        horizontal=True,
+        help="Els clics sobre el mapa interactiu actualitzaran la coordenada seleccionada.",
+    )
 
     st.selectbox(
         "Mode de transport",
@@ -749,6 +816,66 @@ with st.sidebar:
 # =============================================================================
 
 st.title("Simulador d'algorismes de ruta òptima a Viladecans")
+
+# =============================================================================
+# 9a. MAPA INTERACTIU PER SELECCIONAR ORIGEN I DESTINACIÓ (CLIC DIRECTE)
+# =============================================================================
+
+st.markdown("## 🗺️ Selecció interactiva d'origen i destí")
+st.caption(
+    f"📌 Fes clic sobre el mapa per assignar automàticament el punt "
+    f"(desplaçat al node més proper de la xarxa viària) a **{st.session_state.asignar_a}**. "
+    "Els marcadors verd (Origen) i vermell (Destí) es mouen automàticament."
+)
+
+graf_seleccio = obtenir_graf_per_seleccio(tipus_xarxa, penalizar_cruces)
+
+center_prev = st.session_state.get("map_center_prev")
+zoom_prev = st.session_state.get("map_zoom_prev")
+
+mapa_seleccio = construir_mapa_seleccio(
+    st.session_state.lat_origen,
+    st.session_state.lon_origen,
+    st.session_state.lat_destino,
+    st.session_state.lon_destino,
+    center=center_prev,
+    zoom=zoom_prev,
+)
+
+dades_mapa = st_folium(
+    mapa_seleccio,
+    key="mapa_seleccio",
+    height=520,
+    use_container_width=True,
+)
+
+if dades_mapa.get("center"):
+    st.session_state["map_center_prev"] = dades_mapa["center"]
+if dades_mapa.get("zoom"):
+    st.session_state["map_zoom_prev"] = dades_mapa["zoom"]
+
+clic = dades_mapa.get("last_clicked")
+if clic and clic.get("lat") is not None and clic.get("lng") is not None:
+    lat_clic = float(clic["lat"])
+    lon_clic = float(clic["lng"])
+    clau_clic = (st.session_state.asignar_a, round(lat_clic, 7), round(lon_clic, 7))
+
+    if st.session_state.get("ultim_clic") != clau_clic:
+        nodo_seleccionat = ox.nearest_nodes(graf_seleccio, X=lon_clic, Y=lat_clic)
+        lat_node = graf_seleccio.nodes[nodo_seleccionat]["y"]
+        lon_node = graf_seleccio.nodes[nodo_seleccionat]["x"]
+
+        if st.session_state.asignar_a == "Origen":
+            st.session_state.lat_origen = lat_node
+            st.session_state.lon_origen = lon_node
+        else:
+            st.session_state.lat_destino = lat_node
+            st.session_state.lon_destino = lon_node
+
+        st.session_state["ultim_clic"] = clau_clic
+        st.rerun()
+
+st.divider()
 
 if not st.session_state.simular:
     st.info(

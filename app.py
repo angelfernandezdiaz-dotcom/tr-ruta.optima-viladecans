@@ -665,6 +665,28 @@ def generar_resumen_json(resultado):
     return json.dumps(resumen, ensure_ascii=False, indent=2)
 
 
+def generar_gpx(G, ruta_nodes):
+    """
+    Genera el codi XML d'un fitxer GPX (v1.1) amb la ruta calculada.
+    Cada node de la ruta es converteix en un punt trkpt del segment <trkseg>.
+    """
+    gpx = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<gpx version="1.1" creator="TR-Viladecans" xmlns="http://www.topografix.com/GPX/1/1">',
+        "  <trk>",
+        "    <name>Ruta Optima Viladecans</name>",
+        "    <trkseg>",
+    ]
+    for node in ruta_nodes:
+        lat = G.nodes[node]["y"]
+        lon = G.nodes[node]["x"]
+        gpx.append(f'      <trkpt lat="{lat}" lon="{lon}"></trkpt>')
+    gpx.append("    </trkseg>")
+    gpx.append("  </trk>")
+    gpx.append("</gpx>")
+    return "\n".join(gpx)
+
+
 # =============================================================================
 # 8. BARRA LATERAL: ENTRADES DE L'USUARI
 # =============================================================================
@@ -870,6 +892,22 @@ with st.sidebar:
             data=resumen_json,
             file_name=nombre_archivo,
             mime="application/json",
+            use_container_width=True,
+        )
+
+        gpx = generar_gpx(
+            resultados_guardados["G"], resultados_guardados["ruta_optima"]
+        )
+        nombre_gpx = (
+            "ruta_optima_viladecans_"
+            + resultados_guardados["timestamp"].replace(":", "-").replace(" ", "_")
+            + ".gpx"
+        )
+        st.download_button(
+            label="Descarrega la ruta (GPX)",
+            data=gpx,
+            file_name=nombre_gpx,
+            mime="application/gpx+xml",
             use_container_width=True,
         )
 

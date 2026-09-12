@@ -7,7 +7,6 @@ i exportació de resultats per a la memòria del TR.
 """
 
 import heapq
-import json
 import math
 import os
 import re
@@ -621,49 +620,8 @@ def construir_mapa_seleccio(lat_origen, lon_origen, lat_destino, lon_destino):
 
 
 # =============================================================================
-# 7. EXPORTACIÓ DE RESULTATS (JSON PER AL TR)
+# 7. EXPORTACIÓ DE RESULTATS (GPX PER A LA RUTA CALCULADA)
 # =============================================================================
-
-def generar_resumen_json(resultado):
-    """
-    Genera el JSON tècnic descarregable amb el resum de la prova.
-    Serveix com a evidència directa per annexar a la memòria del TR.
-    """
-    resumen = {
-        "descripcion": "Simulador Dijkstra - Viladecans (Fase 3)",
-        "timestamp": resultado["timestamp"],
-        "lugar": LUGAR_DEFECTO,
-        "coordenadas_origen": {
-            "lat": resultado["lat_origen"],
-            "lon": resultado["lon_origen"],
-        },
-        "coordenadas_destino": {
-            "lat": resultado["lat_destino"],
-            "lon": resultado["lon_destino"],
-        },
-        "criterio_optimizacion": resultado["criterio"],
-        "peso_usado": resultado["peso"],
-        "penalizacion_semaforos": resultado["penalizar"],
-        "penalizacion_aplicada_m": PENALIZACION_METROS if resultado["penalizar"] else 0,
-        "velocidad_por_defecto_kmh": VELOCIDAD_DEFECTO_KMH,
-        "resultados": {
-            "distancia_total_m": round(resultado["distancia_total"], 2),
-            "tiempo_total_min": round(resultado["tiempo_ruta_min"], 2),
-            "total_exploraciones": resultado["total_exploraciones"],
-            "total_ramificaciones_registradas": len(resultado["ramificaciones_datos"]),
-            "nodos_en_ruta": len(resultado["ruta_optima"]),
-            "nodos_origen_id": resultado["nodo_origen"],
-            "nodos_destino_id": resultado["nodo_destino"],
-        },
-        "benchmark": {
-            "tiempo_dijkstra_propio_ms": round(resultado["t_propio_ms"], 3),
-            "tiempo_networkx_ms": round(resultado["t_nx_ms"], 3),
-            "coincidencia_ruta_pct": round(resultado["pct_coincidencia"], 2),
-            "coste_networkx": round(resultado["coste_nx"], 3),
-        },
-    }
-    return json.dumps(resumen, ensure_ascii=False, indent=2)
-
 
 def generar_gpx(G, ruta_nodes):
     """
@@ -878,23 +836,9 @@ with st.sidebar:
 
     st.divider()
 
-    # Botó de descàrrega del resum per al TR (només si hi ha resultats)
+    # Botó de descàrrega de la ruta en GPX (només si hi ha resultats)
     resultados_guardados = st.session_state.get("resultados")
     if resultados_guardados and resultados_guardados.get("ruta_optima"):
-        resumen_json = generar_resumen_json(resultados_guardados)
-        nombre_archivo = (
-            "resumen_dijkstra_"
-            + resultados_guardados["timestamp"].replace(":", "-").replace(" ", "_")
-            + ".json"
-        )
-        st.download_button(
-            label="Descarrega el resum (JSON)",
-            data=resumen_json,
-            file_name=nombre_archivo,
-            mime="application/json",
-            use_container_width=True,
-        )
-
         gpx = generar_gpx(
             resultados_guardados["G"], resultados_guardados["ruta_optima"]
         )

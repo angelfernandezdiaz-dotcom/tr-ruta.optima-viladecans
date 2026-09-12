@@ -4,6 +4,7 @@ networkx
 pydeck
 pandas
 scipy
+scikit-learn
 geopandas
 streamlit-folium
 folium

@@ -22,6 +22,11 @@ import streamlit as st
 import folium
 from streamlit_folium import st_folium
 
+# Guarda de keep-alive: si la petició prové del servei de monitorització
+# (?keepalive=true), es fa una pausa per mantenir el procés actiu.
+if st.query_params.get("keepalive") == "true":
+    time.sleep(15)  # Manté el procés actiu durant 15 segons
+
 # =============================================================================
 # 1. CONFIGURACIÓ DE LA PÀGINA
 # =============================================================================
